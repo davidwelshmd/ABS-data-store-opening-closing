@@ -14,21 +14,33 @@ def get_national_abs_data():
     try:
         response = requests.get(abs_url)
         df = pd.read_csv(io.StringIO(response.text))
-        # Automatic Calculation of total entries/exits from the ABS table
-        total_open = df[df['Series_Type'] == 'Entries']['Observation_Value'].sum()
-        total_closed = df[df['Series_Type'] == 'Exits']['Observation_Value'].sum()
+        
+        # Determine column names as they can vary slightly by API version
+        val_col = 'Observation_Value' if 'Observation_Value' in df.columns else 'OBS_VALUE'
+        type_col = 'Series_Type' if 'Series_Type' in df.columns else 'MEASURE'
+        
+        total_open = df[df[type_col].str.contains('Entries', na=False)][val_col].sum()
+        total_closed = df[df[type_col].str.contains('Exits', na=False)][val_col].sum()
         return int(total_open), int(total_closed)
     except:
-        # Fallback values if ABS API is down
-        return 45000, 42000 
+        return 45000, 42000 # Fallback values
 
 # --- 2. AUTOMATIC DIRECTORY: All ASX Retailers ---
 @st.cache_data
 def get_all_asx_retailers():
-    asx_url = "https://asx.com.au"
+    asx_url = "https://www.asx.com.au/asx/research/ASXListedCompanies.csv"
     try:
         response = requests.get(asx_url)
+        # Skip the first 2 lines which are usually descriptive text
         df = pd.read_csv(io.StringIO(response.text), skiprows=2)
+        
+        # Standardise column names to fix the KeyError
+        df.columns = df.columns.str.strip()
+        df = df.rename(columns={
+            'Company name': 'Retailer',
+            'ASX code': 'Ticker'
+        })
+        
         retail_sectors = [
             'Consumer Discretionary Distribution & Retail',
             'Consumer Staples Distribution & Retail',
@@ -36,8 +48,11 @@ def get_all_asx_retailers():
             'Food & Staples Retailing',
             'Automobiles & Components'
         ]
-        return df[df['GICS industry group'].isin(retail_sectors)].rename(columns={'ASX code': 'Ticker', 'Company name': 'Retailer'})
-    except:
+        
+        # Filter for retail companies
+        return df[df['GICS industry group'].isin(retail_sectors)]
+    except Exception as e:
+        st.error(f"Error loading ASX data: {e}")
         return pd.DataFrame()
 
 # --- EXECUTION ---
@@ -58,9 +73,20 @@ st.divider()
 
 # ASX Table: Full List
 st.subheader("🏢 All ASX-Listed Retailers")
-search = st.text_input("Search by Ticker (e.g. ADH, BAP, ASG)", "")
-mask = asx_list['Retailer'].str.contains(search, case=False) | asx_list['Ticker'].str.contains(search, case=False)
 
-st.dataframe(asx_list[mask][['Ticker', 'Retailer', 'GICS industry group']], use_container_width=True, hide_index=True)
+if not asx_list.empty:
+    search = st.text_input("Search by Ticker or Name (e.g. ADH, BAP, ASG)", "")
+    
+    # Filtering logic using renamed columns
+    mask = asx_list['Retailer'].str.contains(search, case=False, na=False) | \
+           asx_list['Ticker'].str.contains(search, case=False, na=False)
 
-st.info("👆 The **National Trends** above update automatically via API. **Specific store counts** for companies like ADH must be manually added to your data file because they are only published in PDF reports.")
+    st.dataframe(
+        asx_list[mask][['Ticker', 'Retailer', 'GICS industry group']], 
+        use_container_width=True, 
+        hide_index=True
+    )
+else:
+    st.warning("No ASX data found. Check your internet connection or the ASX URL.")
+
+st.info("👆 National trends update automatically. Use the search bar to find any listed retailer like **ADH**, **BAP**, or **ASG**.")
