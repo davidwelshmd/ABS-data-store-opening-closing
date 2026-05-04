@@ -14,11 +14,8 @@ def get_national_abs_data():
     try:
         response = requests.get(abs_url)
         df = pd.read_csv(io.StringIO(response.text))
-        
-        # Determine column names as they can vary slightly by API version
         val_col = 'Observation_Value' if 'Observation_Value' in df.columns else 'OBS_VALUE'
         type_col = 'Series_Type' if 'Series_Type' in df.columns else 'MEASURE'
-        
         total_open = df[df[type_col].str.contains('Entries', na=False)][val_col].sum()
         total_closed = df[df[type_col].str.contains('Exits', na=False)][val_col].sum()
         return int(total_open), int(total_closed)
@@ -31,26 +28,30 @@ def get_all_asx_retailers():
     asx_url = "https://www.asx.com.au/asx/research/ASXListedCompanies.csv"
     try:
         response = requests.get(asx_url)
-        # Skip the first 2 lines which are usually descriptive text
-        df = pd.read_csv(io.StringIO(response.text), skiprows=2)
+        content = response.text
         
-        # Standardise column names to fix the KeyError
-        df.columns = df.columns.str.strip()
-        df = df.rename(columns={
-            'Company name': 'Retailer',
-            'ASX code': 'Ticker'
-        })
+        # Robust parsing: Skip preamble metadata lines
+        lines = content.split('\n')
+        # Find the line that actually contains the header "Company name"
+        header_index = next(i for i, line in enumerate(lines) if "Company name" in line)
+        df = pd.read_csv(io.StringIO('\n'.join(lines[header_index:])))
         
+        # Clean column names
+        df.columns = df.columns.str.strip().str.replace('"', '')
+        df = df.rename(columns={'Company name': 'Retailer', 'ASX code': 'Ticker', 'GICS industry group': 'Industry'})
+        
+        # List of sectors to capture all retailers including ADH, BAP, and ASG
         retail_sectors = [
             'Consumer Discretionary Distribution & Retail',
             'Consumer Staples Distribution & Retail',
             'Retailing',
             'Food & Staples Retailing',
-            'Automobiles & Components'
+            'Automobiles & Components',
+            'Consumer Services'
         ]
         
         # Filter for retail companies
-        return df[df['GICS industry group'].isin(retail_sectors)]
+        return df[df['Industry'].isin(retail_sectors)].dropna(subset=['Ticker'])
     except Exception as e:
         st.error(f"Error loading ASX data: {e}")
         return pd.DataFrame()
@@ -59,7 +60,7 @@ def get_all_asx_retailers():
 abs_open, abs_closed = get_national_abs_data()
 asx_list = get_all_asx_retailers()
 
-# Metrics: Automatically Calculated from ABS API
+# Metrics
 st.subheader("📊 National Retail Health (Automatic ABS Data)")
 c1, c2, c3 = st.columns(3)
 with c1:
@@ -75,18 +76,17 @@ st.divider()
 st.subheader("🏢 All ASX-Listed Retailers")
 
 if not asx_list.empty:
-    search = st.text_input("Search by Ticker or Name (e.g. ADH, BAP, ASG)", "")
+    search = st.text_input("Search by Ticker or Name (e.g. ADH, BAP, ASG)", "").upper()
     
-    # Filtering logic using renamed columns
-    mask = asx_list['Retailer'].str.contains(search, case=False, na=False) | \
-           asx_list['Ticker'].str.contains(search, case=False, na=False)
-
-    st.dataframe(
-        asx_list[mask][['Ticker', 'Retailer', 'GICS industry group']], 
-        use_container_width=True, 
-        hide_index=True
-    )
+    # Filter list based on search
+    mask = asx_list['Retailer'].str.upper().str.contains(search, na=False) | \
+           asx_list['Ticker'].str.upper().str.contains(search, na=False)
+    
+    final_df = asx_list[mask][['Ticker', 'Retailer', 'Industry']].sort_values('Ticker')
+    
+    st.write(f"Showing {len(final_df)} companies.")
+    st.dataframe(final_df, use_container_width=True, hide_index=True)
 else:
-    st.warning("No ASX data found. Check your internet connection or the ASX URL.")
+    st.warning("The ASX Directory could not be loaded. Please ensure the CSV URL is accessible.")
 
-st.info("👆 National trends update automatically. Use the search bar to find any listed retailer like **ADH**, **BAP**, or **ASG**.")
+st.info("National trends update via the [ABS API](https://abs.gov.au). List includes retailers like [Adairs (ADH)](https://www.listcorp.com/asx/sectors/consumer-discretionary/retailing), [Bapcor (BAP)](https://www.listcorp.com/asx/sectors/consumer-discretionary/retailing), and [Autosports Group (ASG)](https://www.listcorp.com/asx/sectors/consumer-discretionary/retailing).")
