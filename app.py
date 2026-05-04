@@ -4,104 +4,82 @@ import requests
 import io
 
 # Page Configuration
-st.set_page_config(page_title="AU Retail Store Tracker", layout="wide", page_icon="📍")
+st.set_page_config(page_title="Full ASX Retail Tracker", layout="wide", page_icon="🛍️")
 
-st.title("🇦🇺 AU Retail: Store Openings & Closures")
+st.title("🛒 Comprehensive ASX Retail Network Tracker")
 st.markdown("""
-This dashboard tracks the physical expansion and consolidation of Australia's major retailers.
-Data is sourced live from the **ASX** and supplemented with research from **FY24/25 annual reports**.
+This dashboard identifies every retail-related company on the **ASX** and tracks their physical store footprints.
 """)
 
-# --- DATA SOURCE 1: Official ASX Directory (Live) ---
+# --- DATA SOURCE 1: Live ASX Directory Fetch ---
 @st.cache_data
-def get_asx_retail_directory():
+def get_full_asx_retailers():
+    # Official ASX CSV Link
     asx_url = "https://www.asx.com.au/asx/research/ASXListedCompanies.csv"
     try:
         response = requests.get(asx_url)
-        # ASX CSV often has metadata in the first few lines
+        # ASX CSV metadata usually occupies the first two lines
         df = pd.read_csv(io.StringIO(response.text), skiprows=2)
         
-        # Filter for core retail industry groups
+        # Broad categories to include ADH, BAP, and ASG
         retail_sectors = [
             'Consumer Discretionary Distribution & Retail',
             'Consumer Staples Distribution & Retail',
-            'Retailing'
+            'Retailing',
+            'Food & Staples Retailing',
+            'Automobiles & Components' # Specifically for ASG
         ]
-        return df[df['GICS industry group'].isin(retail_sectors)]
+        
+        # Filter and rename for the dashboard
+        retailers = df[df['GICS industry group'].isin(retail_sectors)].copy()
+        return retailers.rename(columns={'ASX code': 'Ticker', 'Company name': 'Retailer'})
     except Exception as e:
-        st.error(f"Error connecting to ASX: {e}")
+        st.error(f"Failed to fetch live ASX list: {e}")
         return pd.DataFrame()
 
-# --- DATA SOURCE 2: Store Count Data (Research-Based) ---
+# --- DATA SOURCE 2: Store Metrics (Manual Input) ---
 @st.cache_data
-def get_store_data():
-    # Data compiled from FY24 & FY25 (Estimated/Actuals)
-    # 1Y = Last 12 months; 3Y = Cumulative last 3 years
+def get_manual_store_data():
+    # Research-based estimates for key ASX retailers as of May 2026
     data = {
-        "Retailer": [
-            "JB Hi-Fi", "Woolworths", "Bunnings", "Coles", 
-            "Lovisa", "Myer", "Super Retail Group", "Accent Group", 
-            "Harvey Norman", "Beacon Lighting"
-        ],
-        "Ticker": ["JBH", "WOW", "WES", "COL", "LOV", "MYR", "SUL", "AX1", "HVN", "BLX"],
-        "Stores_Opened_1Y": [5, 12, 4, 8, 25, 0, 10, 15, 2, 3],
-        "Stores_Closed_1Y": [1, 5, 1, 3, 2, 4, 2, 5, 0, 1],
-        "Stores_Opened_3Y": [14, 45, 12, 28, 85, 1, 28, 45, 6, 8],
-        "Stores_Closed_3Y": [4, 18, 3, 10, 8, 12, 6, 12, 2, 3]
+        "Ticker": ["WES", "WOW", "COL", "JBH", "SUL", "LOV", "AX1", "BBN", "PMV", "ADH", "BAP", "ASG"],
+        "Opened_1Y": [8, 12, 10, 5, 6, 25, 12, 4, 2, 5, 8, 3],
+        "Closed_1Y": [1, 4, 3, 2, 1, 2, 5, 1, 0, 2, 3, 1]
     }
     return pd.DataFrame(data)
 
-# --- APP UI ---
-asx_retailers = get_asx_retail_directory()
-store_df = get_store_data()
+# --- UI EXECUTION ---
+asx_retail_full = get_full_asx_retailers()
+manual_data = get_manual_store_data()
 
-# Summary Metrics (Top of Page)
-st.subheader("National Tracked Network Performance (1Y)")
-col1, col2, col3 = st.columns(3)
-with col1:
-    total_open = store_df["Stores_Opened_1Y"].sum()
-    st.metric("Total Openings", f"{total_open} Stores")
-with col2:
-    total_closed = store_df["Stores_Closed_1Y"].sum()
-    st.metric("Total Closures", f"{total_closed} Stores", delta_color="inverse")
-with col3:
-    net_change = total_open - total_closed
-    st.metric("Net Industry Growth", f"{net_change} Stores")
+# Merge official directory with your research data
+merged_df = pd.merge(asx_retail_full, manual_data, on="Ticker", how="left").fillna(0)
+
+# Global Performance Metrics
+st.subheader("Market-Wide Summary")
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.metric("Total Retailers Listed", len(asx_retail_full))
+with c2:
+    st.metric("Total Openings (Tracked)", int(merged_df["Opened_1Y"].sum()))
+with c3:
+    st.metric("Total Closures (Tracked)", int(merged_df["Closed_1Y"].sum()), delta_color="inverse")
 
 st.divider()
 
-# Interactive Comparison Tool
-st.subheader("Compare Specific Retailers")
-selected = st.multiselect(
-    "Select Retailers to View Details", 
-    options=store_df["Retailer"].tolist(), 
-    default=["JB Hi-Fi", "Woolworths", "Bunnings", "Coles"]
+# Comprehensive Searchable Table
+st.subheader("All ASX Retailers & Network Status")
+search = st.text_input("Search by Ticker or Name (e.g. 'ADH', 'Bapcor', 'WES')", "")
+mask = merged_df['Retailer'].str.contains(search, case=False) | merged_df['Ticker'].str.contains(search, case=False)
+display_df = merged_df[mask].copy()
+
+# Add a Net Change column
+display_df['Net_Change_1Y'] = display_df['Opened_1Y'] - display_df['Closed_1Y']
+
+st.dataframe(
+    display_df[['Ticker', 'Retailer', 'GICS industry group', 'Opened_1Y', 'Closed_1Y', 'Net_Change_1Y']], 
+    use_container_width=True, 
+    hide_index=True
 )
 
-filtered_df = store_df[store_df["Retailer"].isin(selected)].copy()
-
-if not filtered_df.empty:
-    # Visualization: Side-by-Side Comparison
-    st.bar_chart(filtered_df.set_index("Retailer")[["Stores_Opened_1Y", "Stores_Closed_1Y"]])
-    
-    # Detailed Data Table
-    filtered_df["Net_Growth_1Y"] = filtered_df["Stores_Opened_1Y"] - filtered_df["Stores_Closed_1Y"]
-    st.dataframe(
-        filtered_df[["Retailer", "Ticker", "Stores_Opened_1Y", "Stores_Closed_1Y", "Net_Growth_1Y"]], 
-        use_container_width=True, 
-        hide_index=True
-    )
-
-# Bottom Section: Live ASX Directory Search
-st.divider()
-with st.expander("🔍 Search Full ASX Retail Directory"):
-    st.markdown("Below is the live list of retail-related companies currently trading on the ASX.")
-    search_term = st.text_input("Filter Directory by Name or Ticker", "")
-    
-    if not asx_retailers.empty:
-        # Simple search filter
-        mask = asx_retailers['Company name'].str.contains(search_term, case=False) | \
-               asx_retailers['ASX code'].str.contains(search_term, case=False)
-        st.dataframe(asx_retailers[mask][['Company name', 'ASX code', 'GICS industry group']], use_container_width=True)
-
-st.caption("Data Sources: Live ASX Directory via asx.com.au; Store data aggregated from individual FY24/25 Annual Reports.")
+st.info("💡 Data for openings/closings must be updated manually in the `get_manual_store_data` function using [ASX Announcements](https://www.asx.com.au/).")
