@@ -3,66 +3,73 @@ import pandas as pd
 import requests
 import io
 
-st.set_page_config(page_title="AU Retail Pulse", layout="wide")
-st.title("🇦🇺 Comprehensive AU Retail Performance Tracker")
+st.set_page_config(page_title="AU Retail Store Tracker", layout="wide")
+st.title("📍 AU Retail: Store Openings & Closings")
 
-# --- DATA SOURCE 1: Official ASX Directory ---
+# --- DATA SOURCE 1: Official ASX Directory (Automated) ---
 @st.cache_data
-def get_all_asx_retailers():
-    # Direct link to official ASX CSV
-    asx_url = "https://www.asx.com.au/asx/research/ASXListedCompanies.csv"
+def get_asx_retail_directory():
+    asx_url = "https://asx.com.au"
     try:
-        # ASX CSV often starts with some skipable header rows
         response = requests.get(asx_url)
+        # Skip the first two header rows from ASX
         df = pd.read_csv(io.StringIO(response.text), skiprows=2)
         
-        # Filter for retail-related GICS industry groups
+        # Filter for retail sectors
         retail_sectors = [
             'Consumer Discretionary Distribution & Retail',
             'Consumer Staples Distribution & Retail',
             'Retailing'
         ]
-        retailers = df[df['GICS industry group'].isin(retail_sectors)]
-        return retailers
-    except Exception as e:
-        st.error(f"Error fetching ASX list: {e}")
+        return df[df['GICS industry group'].isin(retail_sectors)]
+    except:
         return pd.DataFrame()
 
-# --- DATA SOURCE 2: Expanded Manual Data ---
-def get_performance_data():
-    # Expand this dictionary with more retailers from the ASX list
+# --- DATA SOURCE 2: Store Count Data ---
+@st.cache_data
+def get_store_data():
+    # You can move these to a CSV later, but here is the simplified structure
     data = {
         "Retailer": [
-            "JB Hi-Fi", "Woolworths", "Wesfarmers (Bunnings)", "Premier Investments", 
-            "Super Retail Group", "Coles Group", "Harvey Norman", "Lovisa", 
-            "Nick Scali", "Myer", "Accent Group", "Adairs", "Baby Bunting"
+            "JB Hi-Fi", "Woolworths", "Bunnings", "Coles", 
+            "Lovisa", "Myer", "Super Retail Group", "Accent Group", 
+            "Harvey Norman", "Beacon Lighting"
         ],
-        "Ticker": [
-            "JBH", "WOW", "WES", "PMV", "SUL", "COL", "HVN", "LOV", "NCK", "MYR", "AX1", "ADH", "BBN"
-        ],
-        "SSS_1Y (%)": [4.5, -1.2, 3.8, -0.5, 2.1, 2.0, -1.5, 10.0, 1.2, -2.0, 1.5, -3.0, -5.0],
-        "Stores_Opened_1Y": [5, 12, 8, 3, 4, 10, 2, 50, 4, 0, 15, 2, 3],
-        "Stores_Closed_1Y": [1, 2, 0, 10, 2, 1, 5, 2, 0, 4, 3, 5, 2]
+        "Ticker": ["JBH", "WOW", "WES", "COL", "LOV", "MYR", "SUL", "AX1", "HVN", "BLX"],
+        "Stores_Opened_1Y":,
+        "Stores_Closed_1Y":,
+        "Stores_Opened_3Y":,
+        "Stores_Closed_3Y": [5, 10, 4, 8, 12, 6, 10, 15, 4, 2]
     }
     return pd.DataFrame(data)
 
-# --- UI EXECUTION ---
-st.subheader("Live ASX Retail Directory")
-asx_list = get_all_asx_retailers()
-if not asx_list.empty:
-    st.write(f"Found {len(asx_list)} retail-related companies currently listed on the ASX.")
-    with st.expander("View Full ASX Retail Directory"):
-        st.dataframe(asx_list, use_container_width=True)
+# --- APP UI ---
+asx_retailers = get_asx_retail_directory()
+store_df = get_store_data()
 
+# 1. Macro View
+st.subheader("Total Tracked Network Changes")
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("Total Openings (Last 12m)", store_df["Stores_Opened_1Y"].sum())
+with col2:
+    st.metric("Total Closures (Last 12m)", store_df["Stores_Closed_1Y"].sum())
+
+# 2. Filtering & Comparison
 st.divider()
+selected = st.multiselect("Select Retailers to Compare", store_df["Retailer"].tolist(), default=store_df["Retailer"].tolist()[:5])
+filtered_df = store_df[store_df["Retailer"].isin(selected)]
 
-st.subheader("Performance Comparison (1-Year)")
-perf_df = get_performance_data()
+# 3. Visualization
+st.subheader("Net Growth (Openings vs Closures)")
+# Calculating Net Growth for the chart
+filtered_df["Net_Growth_1Y"] = filtered_df["Stores_Opened_1Y"] - filtered_df["Stores_Closed_1Y"]
+st.bar_chart(filtered_df.set_index("Retailer")[["Stores_Opened_1Y", "Stores_Closed_1Y"]])
 
-# Selection box to pick from the manual performance data
-selected = st.multiselect("Select Retailers to Compare", perf_df["Retailer"].tolist(), default=perf_df["Retailer"].tolist()[:5])
-filtered_df = perf_df[perf_df["Retailer"].isin(selected)]
+# 4. Data Table
+st.subheader("Store Network Details")
+st.dataframe(filtered_df, use_container_width=True, hide_index=True)
 
-if not filtered_df.empty:
-    st.bar_chart(filtered_df.set_index("Retailer")["SSS_1Y (%)"])
-    st.dataframe(filtered_df, use_container_width=True)
+with st.expander("Search Full ASX Retail Directory"):
+    st.write("This list is pulled live from the ASX website.")
+    st.dataframe(asx_retailers[['Company name', 'ASX code', 'GICS industry group']], use_container_width=True)
